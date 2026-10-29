@@ -38,7 +38,8 @@ def get_appdata_folder(app_name="openrecall"):
 
 
 if args.storage_path:
-    appdata_folder = args.storage_path
+    # Flask resolves relative paths against the package directory, not the cwd
+    appdata_folder = os.path.abspath(os.path.expanduser(args.storage_path))
     screenshots_path = os.path.join(appdata_folder, "screenshots")
     db_path = os.path.join(appdata_folder, "recall.db")
 else:
