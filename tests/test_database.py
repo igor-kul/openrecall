@@ -42,15 +42,21 @@ class TestDatabase(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         """Remove the temporary database file after all tests."""
-        # Try closing connection if any test left it open (though setUp/tearDown should handle this)
         try:
             if hasattr(cls, 'conn') and cls.conn:
                 cls.conn.close()
         except Exception:
-            pass # Ignore errors during cleanup
-        os.remove(cls.db_path)
-        # Clean up sys.path modification
-        sys.path.pop(0)
+            pass
+
+        # Ensure active connections are closed before deleting the file on Windows
+        import gc
+        gc.collect()
+
+        if os.path.exists(cls.db_path):
+            try:
+                os.remove(cls.db_path)
+            except PermissionError:
+                pass
 
 
     def setUp(self):
