@@ -23,6 +23,7 @@ with patch('openrecall.config.db_path', mock_db_path):
         get_all_entries,
         get_timestamps,
         Entry,
+        _decrypt_str,
     )
     # Also patch db_path within the database module itself if it was imported directly there
     import openrecall.database
@@ -96,15 +97,16 @@ class TestDatabase(unittest.TestCase):
         self.assertIsNotNone(inserted_id)
         self.assertIsInstance(inserted_id, int)
 
-        # Verify the entry exists in the DB
+        # Verify the raw entry in DB is encrypted and can be decrypted
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM entries WHERE id = ?", (inserted_id,))
         result = cursor.fetchone()
         self.assertIsNotNone(result)
-        # (id, app, title, text, timestamp, embedding_blob)
-        self.assertEqual(result[1], "TestApp")
-        self.assertEqual(result[2], "TestTitle")
-        self.assertEqual(result[3], "Test text")
+
+        # Ontcijfer de ruwe waarden uit de database
+        self.assertEqual(_decrypt_str(result[1]), "TestApp")
+        self.assertEqual(_decrypt_str(result[2]), "TestTitle")
+        self.assertEqual(_decrypt_str(result[3]), "Test text")
         self.assertEqual(result[4], ts)
         retrieved_embedding = np.frombuffer(result[5], dtype=np.float32)
         np.testing.assert_array_almost_equal(retrieved_embedding, embedding)
@@ -118,19 +120,18 @@ class TestDatabase(unittest.TestCase):
         id1 = insert_entry("First text", ts, embedding1, "App1", "Title1")
         self.assertIsNotNone(id1)
 
-        # Try inserting another entry with the same timestamp
         id2 = insert_entry("Second text", ts, embedding2, "App2", "Title2")
         self.assertIsNone(id2, "Inserting duplicate timestamp should return None")
 
-        # Verify only the first entry exists
         cursor = self.conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM entries WHERE timestamp = ?", (ts,))
         count = cursor.fetchone()[0]
         self.assertEqual(count, 1)
 
         cursor.execute("SELECT text FROM entries WHERE timestamp = ?", (ts,))
-        text = cursor.fetchone()[0]
-        self.assertEqual(text, "First text") # Ensure the first one was kept
+        encrypted_text = cursor.fetchone()[0]
+        # Ontcijfer vóór vergelijking
+        self.assertEqual(_decrypt_str(encrypted_text), "First text")
 
     def test_get_all_entries_empty(self):
         """Test getting entries from an empty database."""

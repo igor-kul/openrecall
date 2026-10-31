@@ -1,13 +1,15 @@
+import io
+import os
 from threading import Thread
 
 import numpy as np
-from flask import Flask, render_template_string, request, send_from_directory
+from flask import Flask, render_template_string, request, send_file
 from jinja2 import BaseLoader
 
 from openrecall.config import appdata_folder, screenshots_path
 from openrecall.database import create_db, get_all_entries, get_timestamps
 from openrecall.nlp import cosine_similarity, get_embedding
-from openrecall.screenshot import record_screenshots_thread
+from openrecall.screenshot import load_image, record_screenshots_thread
 from openrecall.utils import human_readable_time, timestamp_to_human_readable
 
 app = Flask(__name__)
@@ -135,8 +137,14 @@ def timeline():
 
 @app.route("/search")
 def search():
-    q = request.args.get("q")
+    q = request.args.get("q", "").strip()
+    if not q:
+        return render_template_string('{% extends "base_template" %}{% block content %}<div class="container"><div class="alert alert-warning">Voer een zoekopdracht in.</div></div>{% endblock %}')
+
     entries = get_all_entries()
+    if not entries:
+        return render_template_string('{% extends "base_template" %}{% block content %}<div class="container"><div class="alert alert-info">Geen resultaten gevonden.</div></div>{% endblock %}')
+
     embeddings = [entry.embedding for entry in entries]
     query_embedding = get_embedding(q)
     similarities = [cosine_similarity(query_embedding, emb) for emb in embeddings]
@@ -153,15 +161,15 @@ def search():
                 <div class="col-md-3 mb-4">
                     <div class="card">
                         <a href="#" data-toggle="modal" data-target="#modal-{{ loop.index0 }}">
-                            <img src="/static/{{ entry['timestamp'] }}.webp" alt="Image" class="card-img-top">
+                            <img src="/static/{{ entry.timestamp }}.webp" alt="Image" class="card-img-top">
                         </a>
                     </div>
                 </div>
-                <div class="modal fade" id="modal-{{ loop.index0 }}" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel" aria-hidden="true">
+                <div class="modal fade" id="modal-{{ loop.index0 }}" tabindex="-1" role="dialog" aria-hidden="true">
                     <div class="modal-dialog modal-xl" role="document" style="max-width: none; width: 100vw; height: 100vh; padding: 20px;">
                         <div class="modal-content" style="height: calc(100vh - 40px); width: calc(100vw - 40px); padding: 0;">
                             <div class="modal-body" style="padding: 0;">
-                                <img src="/static/{{ entry['timestamp'] }}.webp" alt="Image" style="width: 100%; height: 100%; object-fit: contain; margin: 0 auto;">
+                                <img src="/static/{{ entry.timestamp }}.webp" alt="Image" style="width: 100%; height: 100%; object-fit: contain; margin: 0 auto;">
                             </div>
                         </div>
                     </div>
@@ -174,19 +182,20 @@ def search():
         entries=sorted_entries,
     )
 
-
 @app.route("/static/<filename>")
 def serve_image(filename):
-    return send_from_directory(screenshots_path, filename)
-
+    filepath = os.path.join(screenshots_path, filename)
+    if not os.path.exists(filepath):
+        return "Not found", 404
+    
+    image = load_image(filepath)
+    buffer = io.BytesIO()
+    image.save(buffer, format="WEBP")
+    buffer.seek(0)
+    return send_file(buffer, mimetype="image/webp")
 
 if __name__ == "__main__":
     create_db()
-
-    print(f"Appdata folder: {appdata_folder}")
-
-    # Start the thread to record screenshots
     t = Thread(target=record_screenshots_thread)
     t.start()
-
     app.run(port=8082)
