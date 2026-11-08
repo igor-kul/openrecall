@@ -1,13 +1,14 @@
 import io
 import os
+import time
 from threading import Thread
 
 import numpy as np
-from flask import Flask, render_template_string, request, send_file
+from flask import Flask, redirect, render_template_string, request, send_file
 from jinja2 import BaseLoader
 
 from openrecall.config import appdata_folder, screenshots_path
-from openrecall.database import create_db, get_all_entries, get_timestamps
+from openrecall.database import create_db, delete_entries_between, get_all_entries, get_timestamps
 from openrecall.nlp import cosine_similarity, get_embedding
 from openrecall.screenshot import load_image, record_screenshots_thread
 from openrecall.utils import human_readable_time, timestamp_to_human_readable
@@ -54,11 +55,20 @@ base_template = """
 <body>
 <nav class="navbar navbar-light bg-light">
   <div class="container">
-    <form class="form-inline my-2 my-lg-0 w-100 d-flex" action="/search" method="get">
+    <form class="form-inline my-2 my-lg-0 flex-grow-1 d-flex" action="/search" method="get">
       <input class="form-control flex-grow-1 mr-sm-2" type="search" name="q" placeholder="Search" aria-label="Search">
       <button class="btn btn-outline-secondary my-2 my-sm-0" type="submit">
         <i class="bi bi-search"></i>
       </button>
+    </form>
+    <form class="form-inline my-2 my-lg-0 ml-sm-2" action="/forget" method="post"
+          onsubmit="return confirm('Permanently delete everything captured in this period?');">
+      <select class="form-control mr-2" name="minutes" aria-label="Period to forget">
+        <option value="15">Last 15 minutes</option>
+        <option value="60">Last hour</option>
+        <option value="1440">Last 24 hours</option>
+      </select>
+      <button class="btn btn-outline-danger" type="submit">Forget</button>
     </form>
   </div>
 </nav>
@@ -181,6 +191,20 @@ def search():
 """,
         entries=sorted_entries,
     )
+
+@app.route("/forget", methods=["POST"])
+def forget():
+    """Permanently deletes everything captured in the last few minutes.
+
+    Returns:
+        A redirect to the timeline, or a 400 error for an invalid period.
+    """
+    minutes = request.form.get("minutes", type=int)
+    if minutes is None or minutes < 1:
+        return "Invalid number of minutes", 400
+    now = int(time.time())
+    delete_entries_between(now - minutes * 60, now)
+    return redirect("/")
 
 @app.route("/static/<filename>")
 def serve_image(filename):
