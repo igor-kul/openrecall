@@ -15,6 +15,7 @@ def test_database_text_is_encrypted_on_disk():
     try:
         with patch("openrecall.config.db_path", db_path):
             import openrecall.database as db
+            original_db_path = db.db_path
             db.db_path = db_path
             db.create_db()
 
@@ -45,6 +46,8 @@ def test_database_text_is_encrypted_on_disk():
             )
 
     finally:
+        if "db" in locals():
+            db.db_path = original_db_path
         gc.collect()
         if os.path.exists(db_path):
             os.remove(db_path)

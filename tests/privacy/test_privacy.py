@@ -33,6 +33,7 @@ def test_sensitive_data_in_screenshot_is_masked(category, sensitive_text):
                 import openrecall.database as db
                 from openrecall.screenshot import record_screenshots_thread
 
+                original_db_path = db.db_path
                 db.db_path = db_path
                 db.create_db()
 
@@ -56,6 +57,8 @@ def test_sensitive_data_in_screenshot_is_masked(category, sensitive_text):
                             f"Unmasked {category} keyword '{keyword}' found in database entry text: '{entry.text}'"
                         )
     finally:
+        if "db" in locals():
+            db.db_path = original_db_path
         if os.path.exists(db_path):
             try:
                 os.remove(db_path)
