@@ -12,7 +12,6 @@ from openrecall import database
 import time
 import numpy as np
 import sqlite3
-from pathlib import Path
 from typing import Dict
 
 RETENTION_DAYS = 30  # amount of days
@@ -63,19 +62,6 @@ def _stored_timestamps(db_path: str) -> set:
 def _purge() -> None:
     """Runs the purge. Assumes the db purges with through a purge_old_entries function
     if function not defined, will throw exception rather than execution error"""
-    if not hasattr(database, "purge_old_entries"):
-        pytest.fail(
-            "No retention mechanism: openrecall.database.purge_old_entries() "
-            "does not exist, so captured data is kept forever."
-        )
-    database.purge_old_entries()
-
-
-def test_entries_purged(store):
-    """Run the retention purge with its default retention period.
-
-    Fails the test, rather than erroring, while no purge mechanism exists.
-    """
     if not hasattr(database, "purge_old_entries"):
         pytest.fail(
             "No retention mechanism: openrecall.database.purge_old_entries() "
