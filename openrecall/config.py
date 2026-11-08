@@ -4,15 +4,32 @@ import argparse
 from cryptography.fernet import Fernet
 
 parser = argparse.ArgumentParser(description="OpenRecall")
-parser.add_argument("--storage-path", default=None, help="Path to store the screenshots and database")
-parser.add_argument("--primary-monitor-only", action="store_true", help="Only record the primary monitor", default=False)
+parser.add_argument(
+    "--storage-path", default=None, help="Path to store the screenshots and database"
+)
+parser.add_argument(
+    "--primary-monitor-only",
+    action="store_true",
+    help="Only record the primary monitor",
+    default=False,
+)
+parser.add_argument(
+    "--retention-days", type=int, default=30, help="Defines size of storage window"
+)
 args, _ = parser.parse_known_args()
+
+if args.retention_days < 1:
+    parser.error("--retention-days must be at least 1")
+RETENTION_DAYS = args.retention_days
+
 
 def get_appdata_folder(app_name="openrecall"):
     if sys.platform == "win32":
         appdata = os.getenv("LOCALAPPDATA") or os.getenv("APPDATA")
         if not appdata:
-            raise EnvironmentError("No APPDATA or LOCALAPPDATA environment variable set.")
+            raise EnvironmentError(
+                "No APPDATA or LOCALAPPDATA environment variable set."
+            )
         path = os.path.join(appdata, app_name)
     elif sys.platform == "darwin":
         home = os.path.expanduser("~")
@@ -23,6 +40,7 @@ def get_appdata_folder(app_name="openrecall"):
     if not os.path.exists(path):
         os.makedirs(path)
     return path
+
 
 if args.storage_path:
     appdata_folder = os.path.abspath(os.path.expanduser(args.storage_path))
