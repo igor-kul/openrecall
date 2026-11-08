@@ -8,7 +8,12 @@ from flask import Flask, redirect, render_template_string, request, send_file
 from jinja2 import BaseLoader
 
 from openrecall.config import appdata_folder, screenshots_path
-from openrecall.database import create_db, delete_entries_between, get_all_entries, get_timestamps
+from openrecall.database import (
+    create_db,
+    delete_entries_between,
+    get_all_entries,
+    get_timestamps,
+)
 from openrecall.nlp import cosine_similarity, get_embedding
 from openrecall.screenshot import load_image, record_screenshots_thread
 from openrecall.utils import human_readable_time, timestamp_to_human_readable
@@ -149,11 +154,15 @@ def timeline():
 def search():
     q = request.args.get("q", "").strip()
     if not q:
-        return render_template_string('{% extends "base_template" %}{% block content %}<div class="container"><div class="alert alert-warning">Voer een zoekopdracht in.</div></div>{% endblock %}')
+        return render_template_string(
+            '{% extends "base_template" %}{% block content %}<div class="container"><div class="alert alert-warning">Voer een zoekopdracht in.</div></div>{% endblock %}'
+        )
 
     entries = get_all_entries()
     if not entries:
-        return render_template_string('{% extends "base_template" %}{% block content %}<div class="container"><div class="alert alert-info">Geen resultaten gevonden.</div></div>{% endblock %}')
+        return render_template_string(
+            '{% extends "base_template" %}{% block content %}<div class="container"><div class="alert alert-info">Geen resultaten gevonden.</div></div>{% endblock %}'
+        )
 
     embeddings = [entry.embedding for entry in entries]
     query_embedding = get_embedding(q)
@@ -192,12 +201,14 @@ def search():
         entries=sorted_entries,
     )
 
+
 @app.route("/forget", methods=["POST"])
 def forget():
-    """Permanently deletes everything captured in the last few minutes.
+    """
+    Permanently deletes everything captured in the last few minutes.
+    Give the user a way to control data, usefull for example if a password
+    appeared on screen, or other sensitive data, that the user accidentally recorded
 
-    Returns:
-        A redirect to the timeline, or a 400 error for an invalid period.
     """
     minutes = request.form.get("minutes", type=int)
     if minutes is None or minutes < 1:
@@ -206,17 +217,19 @@ def forget():
     delete_entries_between(now - minutes * 60, now)
     return redirect("/")
 
+
 @app.route("/static/<filename>")
 def serve_image(filename):
     filepath = os.path.join(screenshots_path, filename)
     if not os.path.exists(filepath):
         return "Not found", 404
-    
+
     image = load_image(filepath)
     buffer = io.BytesIO()
     image.save(buffer, format="WEBP")
     buffer.seek(0)
     return send_file(buffer, mimetype="image/webp")
+
 
 if __name__ == "__main__":
     create_db()
