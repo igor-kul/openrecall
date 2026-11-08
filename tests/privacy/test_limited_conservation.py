@@ -92,3 +92,23 @@ def test_expired_screenshots_are_removed_from_disk(store: Dict[str, object]) -> 
     assert os.path.exists(
         screenshots_path / f"{store['recent_ts']}.webp"
     ), "Recent screenshot must be kept"
+
+
+def test_expired_data_is_removed_by_the_capture_loop(store, monkeypatch) -> None:
+    """Expired data must disappear on its own, without the user running a purge."""
+    from openrecall import screenshot
+
+    def stop_loop(seconds: float) -> None:
+        # The capture loop never ends, so stop it at its first pause
+        raise InterruptedError
+
+    # An idle user: the loop takes no screenshot and goes straight to sleep
+    monkeypatch.setattr(screenshot, "is_user_active", lambda: False)
+    monkeypatch.setattr(screenshot.time, "sleep", stop_loop)
+
+    with pytest.raises(InterruptedError):
+        screenshot.record_screenshots_thread()
+
+    assert (
+        store["expired_ts"] not in _stored_timestamps(store["db_path"])
+    ), "The capture loop never removes expired data"
