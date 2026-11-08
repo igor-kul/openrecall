@@ -9,12 +9,14 @@ from cryptography.fernet import Fernet
 from PIL import Image
 
 from openrecall.config import args, screenshots_path, ENCRYPTION_KEY
-from openrecall.database import insert_entry
+from openrecall.database import insert_entry, purge_old_entries
 from openrecall.nlp import get_embedding
 from openrecall.ocr import extract_text_from_image
 from openrecall.utils import get_active_app_name, get_active_window_title, is_user_active
 
 cipher_suite = Fernet(ENCRYPTION_KEY)
+
+PURGE_INTERVAL_SECONDS = 60 * 60
 
 def save_image(image: Image.Image, timestamp: int) -> str:
     filename = f"{timestamp}.webp"
@@ -90,8 +92,15 @@ def take_screenshots() -> List[np.ndarray]:
 def record_screenshots_thread() -> None:
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     last_screenshots: List[np.ndarray] = take_screenshots()
+    last_purge: float = 0.0
 
     while True:
+        # Checked before the activity test so expired data is also removed
+        # while the user is away from the computer
+        if time.time() - last_purge >= PURGE_INTERVAL_SECONDS:
+            purge_old_entries()
+            last_purge = time.time()
+
         if not is_user_active():
             time.sleep(3)
             continue
