@@ -51,3 +51,31 @@ def test_database_text_is_encrypted_on_disk():
         gc.collect()
         if os.path.exists(db_path):
             os.remove(db_path)
+
+
+def test_embedding_is_encrypted_on_disk(tmp_path):
+    db_path = str(tmp_path / "recall.db")
+
+    try:
+        with patch("openrecall.config.db_path", db_path):
+            import openrecall.database as db
+
+            original_db_path = db.db_path
+            db.db_path = db_path
+            db.create_db()
+
+            embedding = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+            db.insert_entry("text", int(time.time()), embedding, "app", "title")
+
+            with sqlite3.connect(db_path) as conn:
+                raw_embedding = conn.execute(
+                    "SELECT embedding FROM entries"
+                ).fetchone()[0]
+
+            assert raw_embedding != embedding.tobytes()
+            np.testing.assert_array_equal(
+                db.get_all_entries()[0].embedding, embedding
+            )
+    finally:
+        if "db" in locals():
+            db.db_path = original_db_path

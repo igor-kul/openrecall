@@ -11,6 +11,7 @@ from openrecall.config import db_path, screenshots_path, ENCRYPTION_KEY, RETENTI
 SECONDS_PER_DAY = 24 * 60 * 60
 
 cipher_suite = Fernet(ENCRYPTION_KEY)
+EMBEDDING_PREFIX = b"openrecall-embedding-v1:"
 
 Entry = namedtuple("Entry", ["id", "app", "title", "text", "timestamp", "embedding"])
 
@@ -21,6 +22,17 @@ def _encrypt_str(data: str) -> str:
 
 def _decrypt_str(data: str) -> str:
     return cipher_suite.decrypt(data.encode("utf-8")).decode("utf-8")
+
+
+def _encrypt_embedding(embedding: np.ndarray) -> bytes:
+    embedding_bytes = embedding.astype(np.float32).tobytes()
+    return EMBEDDING_PREFIX + cipher_suite.encrypt(embedding_bytes)
+
+
+def _decrypt_embedding(data: bytes) -> np.ndarray:
+    if data.startswith(EMBEDDING_PREFIX):
+        data = cipher_suite.decrypt(data[len(EMBEDDING_PREFIX) :])
+    return np.frombuffer(data, dtype=np.float32)
 
 
 def create_db() -> None:
@@ -54,7 +66,7 @@ def get_all_entries() -> List[Entry]:
             )
             results = cursor.fetchall()
             for row in results:
-                embedding = np.frombuffer(row["embedding"], dtype=np.float32)
+                embedding = _decrypt_embedding(row["embedding"])
                 entries.append(
                     Entry(
                         id=row["id"],
@@ -86,7 +98,7 @@ def get_timestamps() -> List[int]:
 def insert_entry(
     text: str, timestamp: int, embedding: np.ndarray, app: str, title: str
 ) -> Optional[int]:
-    embedding_bytes: bytes = embedding.astype(np.float32).tobytes()
+    embedding_bytes = _encrypt_embedding(embedding)
     last_row_id: Optional[int] = None
     try:
         with sqlite3.connect(db_path) as conn:

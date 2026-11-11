@@ -24,6 +24,7 @@ with patch('openrecall.config.db_path', mock_db_path):
         get_timestamps,
         Entry,
         _decrypt_str,
+        _decrypt_embedding,
     )
     # Also patch db_path within the database module itself if it was imported directly there
     import openrecall.database
@@ -108,7 +109,7 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(_decrypt_str(result[2]), "TestTitle")
         self.assertEqual(_decrypt_str(result[3]), "Test text")
         self.assertEqual(result[4], ts)
-        retrieved_embedding = np.frombuffer(result[5], dtype=np.float32)
+        retrieved_embedding = _decrypt_embedding(result[5])
         np.testing.assert_array_almost_equal(retrieved_embedding, embedding)
 
     def test_insert_duplicate_timestamp(self):

@@ -2,6 +2,8 @@ import os
 import sys
 import argparse
 from cryptography.fernet import Fernet
+import keyring
+from keyring.errors import KeyringError
 
 parser = argparse.ArgumentParser(description="OpenRecall")
 parser.add_argument(
@@ -56,15 +58,57 @@ if not os.path.exists(screenshots_path):
     except:
         pass
 
-# Centralized Encryption Key logic
-ENCRYPTION_KEY = os.environ.get("OPENRECALL_ENCRYPTION_KEY")
-if not ENCRYPTION_KEY:
-    key_file = os.path.join(appdata_folder, "secret.key")
-    if os.path.exists(key_file):
-        with open(key_file, "rb") as f:
-            ENCRYPTION_KEY = f.read().decode()
-    else:
-        new_key = Fernet.generate_key()
-        with open(key_file, "wb") as f:
-            f.write(new_key)
-        ENCRYPTION_KEY = new_key.decode()
+KEYRING_SERVICE = "OpenRecall Encryption"
+KEYRING_USERNAME = os.path.abspath(appdata_folder)
+
+
+def _load_encryption_key() -> str:
+    environment_key = os.environ.get("OPENRECALL_ENCRYPTION_KEY")
+    if environment_key:
+        Fernet(environment_key)
+        return environment_key
+
+    try:
+        stored_key = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+    except KeyringError as exc:
+        raise RuntimeError(
+            "OpenRecall could not access the operating system keyring."
+        ) from exc
+    if stored_key:
+        Fernet(stored_key)
+        return stored_key
+
+    legacy_key_file = os.path.join(appdata_folder, "secret.key")
+    if os.path.exists(legacy_key_file):
+        try:
+            with open(legacy_key_file, "rb") as f:
+                legacy_key = f.read().decode("ascii")
+            Fernet(legacy_key)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                "OpenRecall found an invalid legacy encryption key."
+            ) from exc
+        try:
+            keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, legacy_key)
+            if keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME) != legacy_key:
+                raise KeyringError("Keyring did not persist the migrated key.")
+            os.remove(legacy_key_file)
+        except (KeyringError, OSError) as exc:
+            raise RuntimeError(
+                "OpenRecall could not migrate the legacy encryption key securely."
+            ) from exc
+        return legacy_key
+
+    new_key = Fernet.generate_key().decode("ascii")
+    try:
+        keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, new_key)
+        if keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME) != new_key:
+            raise KeyringError("Keyring did not persist the generated key.")
+    except KeyringError as exc:
+        raise RuntimeError(
+            "OpenRecall could not store its encryption key in the operating system keyring."
+        ) from exc
+    return new_key
+
+
+ENCRYPTION_KEY = _load_encryption_key()
