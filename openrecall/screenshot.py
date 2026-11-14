@@ -8,15 +8,26 @@ import numpy as np
 from cryptography.fernet import Fernet
 from PIL import Image
 
-from openrecall.config import args, screenshots_path, ENCRYPTION_KEY
+from openrecall.config import (
+    DEFAULT_EXCLUDED_APPS,
+    ENCRYPTION_KEY,
+    EXCLUDED_APPS,
+    args,
+    screenshots_path,
+)
 from openrecall.database import insert_entry, purge_old_entries
 from openrecall.nlp import get_embedding
 from openrecall.ocr import extract_text_from_image
-from openrecall.utils import get_active_app_name, get_active_window_title, is_user_active
+from openrecall.utils import (
+    get_active_app_name,
+    get_active_window_title,
+    is_user_active,
+)
 
 cipher_suite = Fernet(ENCRYPTION_KEY)
 
 PURGE_INTERVAL_SECONDS = 60 * 60
+
 
 def save_image(image: Image.Image, timestamp: int) -> str:
     filename = f"{timestamp}.webp"
@@ -27,6 +38,7 @@ def save_image(image: Image.Image, timestamp: int) -> str:
     with open(filepath, "wb") as f:
         f.write(encrypted_bytes)
     return filepath
+
 
 def load_image(filepath: str) -> Image.Image:
     with open(filepath, "rb") as f:
@@ -89,6 +101,16 @@ def take_screenshots() -> List[np.ndarray]:
 
     return screenshots
 
+
+def is_excluded_app(app_name: str) -> bool:
+    """Checks whether an application must not be recorded."""
+    # Windows reports the executable ("WhatsApp.exe"), macOS the display name
+    name = app_name.strip().lower().removesuffix(".exe")
+
+    excluded = {app.lower() for app in DEFAULT_EXCLUDED_APPS + list(EXCLUDED_APPS)}
+    return name in excluded
+
+
 def record_screenshots_thread() -> None:
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     last_screenshots: List[np.ndarray] = take_screenshots()
@@ -102,6 +124,14 @@ def record_screenshots_thread() -> None:
             last_purge = time.time()
 
         if not is_user_active():
+            time.sleep(3)
+            continue
+
+        # Read once, before capturing: the decision and the stored metadata
+        # then describe the same moment, and an excluded app is never grabbed
+        active_app_name: str = get_active_app_name() or "Unknown App"
+        active_window_title: str = get_active_window_title() or "Unknown Title"
+        if is_excluded_app(active_app_name):
             time.sleep(3)
             continue
 
@@ -121,8 +151,8 @@ def record_screenshots_thread() -> None:
                 text: str = extract_text_from_image(current_screenshot)
                 if text.strip():
                     embedding: np.ndarray = get_embedding(text)
-                    active_app_name: str = get_active_app_name() or "Unknown App"
-                    active_window_title: str = get_active_window_title() or "Unknown Title"
-                    insert_entry(text, timestamp, embedding, active_app_name, active_window_title)
+                    insert_entry(
+                        text, timestamp, embedding, active_app_name, active_window_title
+                    )
 
         time.sleep(3)

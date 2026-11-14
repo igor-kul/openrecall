@@ -18,11 +18,22 @@ parser.add_argument(
 parser.add_argument(
     "--retention-days", type=int, default=30, help="Defines size of storage window"
 )
+DEFAULT_EXCLUDED_APPS = ["1Password", "Bitwarden", "KeePassXC", "Keychain Access"]
+parser.add_argument(
+    "--exclude-apps",
+    default="",
+    help="Comma-separated names of extra applications that are never recorded, "
+    "e.g. 'WhatsApp,Signal'. Password managers are always excluded.",
+)
 args, _ = parser.parse_known_args()
 
 if args.retention_days < 1:
     parser.error("--retention-days must be at least 1")
 RETENTION_DAYS = args.retention_days
+
+EXCLUDED_APPS = DEFAULT_EXCLUDED_APPS + [
+    name.strip() for name in args.exclude_apps.split(",") if name.strip()
+]
 
 
 def get_appdata_folder(app_name="openrecall"):
