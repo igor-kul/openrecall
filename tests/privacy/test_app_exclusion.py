@@ -24,7 +24,10 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Dict[str, object]:
     screenshots_path = tmp_path / "screenshots"
     screenshots_path.mkdir()
     monkeypatch.setattr(database, "db_path", db_path)
-    monkeypatch.setattr(database, "screenshots_path", str(screenshots_path))
+    # raising=False: before the retention fix, database.py has no screenshots_path
+    monkeypatch.setattr(
+        database, "screenshots_path", str(screenshots_path), raising=False
+    )
     monkeypatch.setattr(screenshot, "screenshots_path", str(screenshots_path))
     database.create_db()
     return {"db_path": db_path, "screenshots_path": screenshots_path}
