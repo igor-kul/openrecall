@@ -104,11 +104,13 @@ def take_screenshots() -> List[np.ndarray]:
 
 def is_excluded_app(app_name: str) -> bool:
     """Checks whether an application must not be recorded."""
-    # Windows reports the executable ("WhatsApp.exe"), macOS the display name
-    name = app_name.strip().lower().removesuffix(".exe")
+    def normalize(name: str) -> str:
+        # Windows reports the executable ("WhatsApp.exe"), macOS the display
+        # name; both sides are normalized so "--exclude-apps WhatsApp.exe" works too
+        return name.strip().lower().removesuffix(".exe")
 
-    excluded = {app.lower() for app in DEFAULT_EXCLUDED_APPS + list(EXCLUDED_APPS)}
-    return name in excluded
+    excluded = {normalize(app) for app in DEFAULT_EXCLUDED_APPS + list(EXCLUDED_APPS)}
+    return normalize(app_name) in excluded
 
 
 def record_screenshots_thread() -> None:
