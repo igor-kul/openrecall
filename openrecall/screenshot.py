@@ -18,6 +18,7 @@ from openrecall.config import (
 from openrecall.database import insert_entry, purge_old_entries
 from openrecall.nlp import get_embedding
 from openrecall.ocr import extract_text_from_image
+from openrecall.privacy import contains_sensitive_info
 from openrecall.utils import (
     get_active_app_name,
     get_active_window_title,
@@ -147,10 +148,14 @@ def record_screenshots_thread() -> None:
             last_screenshot = last_screenshots[i]
             if not is_similar(current_screenshot, last_screenshot):
                 last_screenshots[i] = current_screenshot
+                # OCR runs before saving so a screen with sensitive data is
+                # dropped entirely: neither the image nor its text is stored
+                text: str = extract_text_from_image(current_screenshot)
+                if contains_sensitive_info(text):
+                    continue
                 image = Image.fromarray(current_screenshot)
                 timestamp = int(time.time())
                 save_image(image, timestamp)
-                text: str = extract_text_from_image(current_screenshot)
                 if text.strip():
                     embedding: np.ndarray = get_embedding(text)
                     insert_entry(

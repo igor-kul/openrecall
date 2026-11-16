@@ -48,9 +48,9 @@ def test_sensitive_data_in_screenshot_is_masked(category, sensitive_text):
                     except InterruptedError:
                         pass
 
+                # A screenshot with sensitive data may be skipped entirely, so
+                # no entry is also a valid outcome
                 entries = db.get_all_entries()
-                assert len(entries) > 0, "No entry was recorded into the database."
-
                 for entry in entries:
                     for keyword in sensitive_text.split():
                         assert keyword.lower() not in entry.text.lower(), (
