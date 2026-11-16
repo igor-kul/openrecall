@@ -1,10 +1,13 @@
+import hmac
 import io
 import os
+import secrets
 import time
-from threading import Thread
+import webbrowser
+from threading import Thread, Timer
 
 import numpy as np
-from flask import Flask, redirect, render_template_string, request, send_file
+from flask import Flask, abort, redirect, render_template_string, request, send_file
 from jinja2 import BaseLoader
 
 from openrecall.config import appdata_folder, screenshots_path
@@ -19,6 +22,16 @@ from openrecall.screenshot import load_image, record_screenshots_thread
 from openrecall.utils import human_readable_time, timestamp_to_human_readable
 
 app = Flask(__name__)
+
+PORT = 8082
+# Only these names may appear in the Host header: a malicious website that
+# points its own domain at 127.0.0.1 (DNS rebinding) still sends its own name
+ALLOWED_HOSTNAMES = {"127.0.0.1", "localhost"}
+SESSION_COOKIE = "openrecall_session"
+BROWSER_OPEN_DELAY_SECONDS = 1.0
+
+# Lives only in memory, so every start of OpenRecall needs the fresh link
+ACCESS_TOKEN = secrets.token_urlsafe(32)
 
 app.jinja_env.filters["human_readable_time"] = human_readable_time
 app.jinja_env.filters["timestamp_to_human_readable"] = timestamp_to_human_readable
@@ -99,6 +112,40 @@ class StringLoader(BaseLoader):
 
 
 app.jinja_env.loader = StringLoader()
+
+
+def _matches_token(value: str) -> bool:
+    """Compares in constant time so the token cannot be guessed by timing."""
+    return hmac.compare_digest(value.encode("utf-8"), ACCESS_TOKEN.encode("utf-8"))
+
+
+@app.before_request
+def require_authentication():
+    """Only the browser that opened the startup link may use the web UI.
+
+    Without this any local program, other user account or website could
+    request decrypted screenshots or POST to /forget.
+    """
+    hostname = request.host.rsplit(":", 1)[0]
+    if hostname not in ALLOWED_HOSTNAMES:
+        abort(403)
+
+    if _matches_token(request.cookies.get(SESSION_COOKIE, "")):
+        return None
+
+    if _matches_token(request.args.get("token", "")):
+        # Redirect so the token leaves the address bar and browser history
+        response = redirect(request.path)
+        # SameSite=Strict: other websites cannot send requests with this cookie
+        response.set_cookie(
+            SESSION_COOKIE, ACCESS_TOKEN, httponly=True, samesite="Strict"
+        )
+        return response
+
+    return (
+        "Access denied. Open the link printed in the OpenRecall console.",
+        403,
+    )
 
 
 @app.route("/")
@@ -235,4 +282,9 @@ if __name__ == "__main__":
     create_db()
     t = Thread(target=record_screenshots_thread)
     t.start()
-    app.run(port=8082)
+
+    access_url = f"http://127.0.0.1:{PORT}/?token={ACCESS_TOKEN}"
+    print(f"Open OpenRecall at: {access_url}")
+    # Delayed so the server is listening by the time the browser connects
+    Timer(BROWSER_OPEN_DELAY_SECONDS, webbrowser.open, args=[access_url]).start()
+    app.run(host="127.0.0.1", port=PORT)

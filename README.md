@@ -79,8 +79,11 @@ To run:
 ```
 python3 -m openrecall.app
 ```
-Open your browser to:
-[http://localhost:8082](http://localhost:8082) to access OpenRecall.
+OpenRecall opens your browser automatically. The web interface is protected
+with a secret token that changes on every start: if the browser does not open,
+use the `Open OpenRecall at: http://127.0.0.1:8082/?token=...` link printed in
+the console. Opening [http://localhost:8082](http://localhost:8082) without the
+token returns "Access denied".
 
 ## Arguments
 `--storage-path` (default: user data path for your OS): allows you to specify the path where the screenshots and database should be stored. We recommend [creating an encrypted volume](docs/encryption.md) to store your data.
