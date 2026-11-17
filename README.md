@@ -79,11 +79,14 @@ To run:
 ```
 python3 -m openrecall.app
 ```
-OpenRecall opens your browser automatically. The web interface is protected
-with a secret token that changes on every start: if the browser does not open,
-use the `Open OpenRecall at: http://127.0.0.1:8082/?token=...` link printed in
-the console. Opening [http://localhost:8082](http://localhost:8082) without the
-token returns "Access denied".
+On first start OpenRecall asks you in the console to choose a password. Recording
+runs without it, but viewing your history always requires it: the web interface
+at [http://localhost:8082](http://localhost:8082) opens on a login page and locks
+itself after 5 minutes of inactivity (or when you click **Lock**).
+
+**There is no password reset.** Without the password nobody, including you, can
+decrypt the recordings. Deleting `auth.json` lets you choose a new password, but
+everything recorded before that becomes unreadable.
 
 ## Arguments
 `--storage-path` (default: user data path for your OS): allows you to specify the path where the screenshots and database should be stored. We recommend [creating an encrypted volume](docs/encryption.md) to store your data.

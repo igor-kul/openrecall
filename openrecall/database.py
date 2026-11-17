@@ -1,38 +1,37 @@
+import base64
 import os
 import sqlite3
 import time
 from collections import namedtuple
 import numpy as np
 from typing import List, Optional
-from cryptography.fernet import Fernet
+from cryptography.fernet import InvalidToken
 
-from openrecall.config import db_path, screenshots_path, ENCRYPTION_KEY, RETENTION_DAYS
+from openrecall import vault
+from openrecall.config import db_path, screenshots_path, RETENTION_DAYS
 
 SECONDS_PER_DAY = 24 * 60 * 60
 
-cipher_suite = Fernet(ENCRYPTION_KEY)
-EMBEDDING_PREFIX = b"openrecall-embedding-v1:"
 
 Entry = namedtuple("Entry", ["id", "app", "title", "text", "timestamp", "embedding"])
 
 
 def _encrypt_str(data: str) -> str:
-    return cipher_suite.encrypt(data.encode("utf-8")).decode("utf-8")
+    # Text columns hold strings, so the encrypted bytes are stored base64-encoded
+    encrypted = vault.encrypt(data.encode("utf-8"))
+    return base64.urlsafe_b64encode(encrypted).decode("ascii")
 
 
 def _decrypt_str(data: str) -> str:
-    return cipher_suite.decrypt(data.encode("utf-8")).decode("utf-8")
+    return vault.decrypt(base64.urlsafe_b64decode(data)).decode("utf-8")
 
 
 def _encrypt_embedding(embedding: np.ndarray) -> bytes:
-    embedding_bytes = embedding.astype(np.float32).tobytes()
-    return EMBEDDING_PREFIX + cipher_suite.encrypt(embedding_bytes)
+    return vault.encrypt(embedding.astype(np.float32).tobytes())
 
 
 def _decrypt_embedding(data: bytes) -> np.ndarray:
-    if data.startswith(EMBEDDING_PREFIX):
-        data = cipher_suite.decrypt(data[len(EMBEDDING_PREFIX) :])
-    return np.frombuffer(data, dtype=np.float32)
+    return np.frombuffer(vault.decrypt(data), dtype=np.float32)
 
 
 def create_db() -> None:
@@ -66,17 +65,20 @@ def get_all_entries() -> List[Entry]:
             )
             results = cursor.fetchall()
             for row in results:
-                embedding = _decrypt_embedding(row["embedding"])
-                entries.append(
-                    Entry(
+                try:
+                    entry = Entry(
                         id=row["id"],
                         app=_decrypt_str(row["app"]),
                         title=_decrypt_str(row["title"]),
                         text=_decrypt_str(row["text"]),
                         timestamp=row["timestamp"],
-                        embedding=embedding,
+                        embedding=_decrypt_embedding(row["embedding"]),
                     )
-                )
+                except InvalidToken:
+                    # Encrypted with keys that no longer exist (auth.json was
+                    # deleted, or an old version), so it can never be read again
+                    continue
+                entries.append(entry)
     except sqlite3.Error as e:
         print(f"Database error while fetching all entries: {e}")
     return entries

@@ -19,7 +19,6 @@ install_requires = [
     "rapidfuzz==3.9.3",
     "Pillow==10.3.0",
     "cryptography==43.0.1",
-    "keyring==25.5.0",
 ]
 
 # Define OS-specific dependencies

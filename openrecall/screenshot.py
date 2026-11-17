@@ -5,16 +5,15 @@ from typing import List
 
 import mss
 import numpy as np
-from cryptography.fernet import Fernet
 from PIL import Image
 
 from openrecall.config import (
     DEFAULT_EXCLUDED_APPS,
-    ENCRYPTION_KEY,
     EXCLUDED_APPS,
     args,
     screenshots_path,
 )
+from openrecall import vault
 from openrecall.database import insert_entry, purge_old_entries
 from openrecall.nlp import get_embedding
 from openrecall.ocr import extract_text_from_image
@@ -25,8 +24,6 @@ from openrecall.utils import (
     is_user_active,
 )
 
-cipher_suite = Fernet(ENCRYPTION_KEY)
-
 PURGE_INTERVAL_SECONDS = 60 * 60
 
 
@@ -35,7 +32,7 @@ def save_image(image: Image.Image, timestamp: int) -> str:
     filepath = os.path.join(screenshots_path, filename)
     buffer = io.BytesIO()
     image.save(buffer, format="webp", lossless=True)
-    encrypted_bytes = cipher_suite.encrypt(buffer.getvalue())
+    encrypted_bytes = vault.encrypt(buffer.getvalue())
     with open(filepath, "wb") as f:
         f.write(encrypted_bytes)
     return filepath
@@ -44,7 +41,7 @@ def save_image(image: Image.Image, timestamp: int) -> str:
 def load_image(filepath: str) -> Image.Image:
     with open(filepath, "rb") as f:
         encrypted_bytes = f.read()
-    decrypted_bytes = cipher_suite.decrypt(encrypted_bytes)
+    decrypted_bytes = vault.decrypt(encrypted_bytes)
     buffer = io.BytesIO(decrypted_bytes)
     image = Image.open(buffer)
     image.load()

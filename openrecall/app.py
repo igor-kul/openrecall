@@ -1,3 +1,4 @@
+import getpass
 import hmac
 import io
 import os
@@ -7,9 +8,11 @@ import webbrowser
 from threading import Thread, Timer
 
 import numpy as np
+from cryptography.fernet import InvalidToken
 from flask import Flask, abort, redirect, render_template_string, request, send_file
 from jinja2 import BaseLoader
 
+from openrecall import vault
 from openrecall.config import appdata_folder, screenshots_path
 from openrecall.database import (
     create_db,
@@ -29,12 +32,19 @@ PORT = 8082
 ALLOWED_HOSTNAMES = {"127.0.0.1", "localhost"}
 SESSION_COOKIE = "openrecall_session"
 BROWSER_OPEN_DELAY_SECONDS = 1.0
+SESSION_IDLE_SECONDS = 5 * 60
+IDLE_CHECK_SECONDS = 30
+MAX_FAILED_LOGINS = 5
+LOGIN_BLOCK_SECONDS = 30
 
-# Lives only in memory, so every start of OpenRecall needs the fresh link
-ACCESS_TOKEN = secrets.token_urlsafe(32)
+# One session at a time: OpenRecall has a single user, and logging in again
+# from another browser ends the previous session
+_session = {"id": None, "last_activity": 0.0}
+_login_attempts = {"failed": 0, "blocked_until": 0.0}
 
 app.jinja_env.filters["human_readable_time"] = human_readable_time
 app.jinja_env.filters["timestamp_to_human_readable"] = timestamp_to_human_readable
+app.jinja_env.globals["idle_ms"] = SESSION_IDLE_SECONDS * 1000
 
 base_template = """
 <!DOCTYPE html>
@@ -71,6 +81,7 @@ base_template = """
   </style>
 </head>
 <body>
+{% block nav %}
 <nav class="navbar navbar-light bg-light">
   <div class="container">
     <form class="form-inline my-2 my-lg-0 flex-grow-1 d-flex" action="/search" method="get">
@@ -88,8 +99,25 @@ base_template = """
       </select>
       <button class="btn btn-outline-danger" type="submit">Forget</button>
     </form>
+    <form id="lockForm" class="form-inline my-2 my-lg-0 ml-sm-2" action="/lock" method="post">
+      <button class="btn btn-outline-dark" type="submit"><i class="bi bi-lock"></i> Lock</button>
+    </form>
   </div>
 </nav>
+<script>
+  // The server cannot take back a page that is already on screen, so the
+  // page locks itself when nobody uses it
+  let idleTimer;
+  function resetIdleTimer() {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => document.getElementById('lockForm').submit(), {{ idle_ms }});
+  }
+  ['mousemove', 'keydown', 'scroll', 'click'].forEach(
+    (eventName) => document.addEventListener(eventName, resetIdleTimer)
+  );
+  resetIdleTimer();
+</script>
+{% endblock %}
 {% block content %}
 
 {% endblock %}
@@ -114,38 +142,98 @@ class StringLoader(BaseLoader):
 app.jinja_env.loader = StringLoader()
 
 
-def _matches_token(value: str) -> bool:
-    """Compares in constant time so the token cannot be guessed by timing."""
-    return hmac.compare_digest(value.encode("utf-8"), ACCESS_TOKEN.encode("utf-8"))
+login_template = """
+{% extends "base_template" %}
+{% block nav %}{% endblock %}
+{% block content %}
+<div class="container" style="max-width: 400px; margin-top: 15vh;">
+  <h4 class="mb-3"><i class="bi bi-lock"></i> OpenRecall is locked</h4>
+  {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+  <form action="/login" method="post">
+    <input class="form-control mb-2" type="password" name="password"
+           placeholder="Password" aria-label="Password" autofocus required>
+    <button class="btn btn-primary btn-block" type="submit">Unlock</button>
+  </form>
+</div>
+{% endblock %}
+"""
+
+
+def _end_session() -> None:
+    """Logs out and forgets the private key, so the history is unreadable again."""
+    _session["id"] = None
+    vault.lock()
+
+
+def _lock_if_idle() -> None:
+    idle_seconds = time.time() - _session["last_activity"]
+    if _session["id"] is not None and idle_seconds > SESSION_IDLE_SECONDS:
+        _end_session()
+
+
+def _has_valid_session() -> bool:
+    _lock_if_idle()
+    if _session["id"] is None:
+        return False
+    cookie = request.cookies.get(SESSION_COOKIE, "")
+    # Constant-time comparison so the session id cannot be guessed by timing
+    if not hmac.compare_digest(cookie.encode("utf-8"), _session["id"].encode("utf-8")):
+        return False
+    _session["last_activity"] = time.time()
+    return True
 
 
 @app.before_request
 def require_authentication():
-    """Only the browser that opened the startup link may use the web UI.
+    """Only someone who knows the password may use the web UI.
 
-    Without this any local program, other user account or website could
-    request decrypted screenshots or POST to /forget.
+    Without this anyone at the computer, any local program, other user
+    account or website could view screenshots or POST to /forget.
     """
     hostname = request.host.rsplit(":", 1)[0]
     if hostname not in ALLOWED_HOSTNAMES:
         abort(403)
 
-    if _matches_token(request.cookies.get(SESSION_COOKIE, "")):
+    if request.endpoint == "login" or _has_valid_session():
         return None
+    if request.method == "GET":
+        return redirect("/login")
+    abort(403)
 
-    if _matches_token(request.args.get("token", "")):
-        # Redirect so the token leaves the address bar and browser history
-        response = redirect(request.path)
-        # SameSite=Strict: other websites cannot send requests with this cookie
-        response.set_cookie(
-            SESSION_COOKIE, ACCESS_TOKEN, httponly=True, samesite="Strict"
-        )
-        return response
 
-    return (
-        "Access denied. Open the link printed in the OpenRecall console.",
-        403,
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        return render_template_string(login_template, error=None)
+
+    if time.time() < _login_attempts["blocked_until"]:
+        error = f"Too many wrong passwords. Wait {LOGIN_BLOCK_SECONDS} seconds."
+        return render_template_string(login_template, error=error), 429
+
+    if not vault.unlock(request.form.get("password", "")):
+        _login_attempts["failed"] += 1
+        if _login_attempts["failed"] >= MAX_FAILED_LOGINS:
+            _login_attempts["failed"] = 0
+            _login_attempts["blocked_until"] = time.time() + LOGIN_BLOCK_SECONDS
+        return render_template_string(login_template, error="Wrong password."), 401
+
+    _login_attempts["failed"] = 0
+    _session["id"] = secrets.token_urlsafe(32)
+    _session["last_activity"] = time.time()
+    response = redirect("/")
+    # SameSite=Strict: other websites cannot send requests with this cookie
+    response.set_cookie(
+        SESSION_COOKIE, _session["id"], httponly=True, samesite="Strict"
     )
+    return response
+
+
+@app.route("/lock", methods=["POST"])
+def lock():
+    _end_session()
+    response = redirect("/login")
+    response.delete_cookie(SESSION_COOKIE)
+    return response
 
 
 @app.route("/")
@@ -271,19 +359,51 @@ def serve_image(filename):
     if not os.path.exists(filepath):
         return "Not found", 404
 
-    image = load_image(filepath)
+    try:
+        image = load_image(filepath)
+    except InvalidToken:
+        # Recorded with keys that no longer exist (auth.json was deleted)
+        return "Not found", 404
     buffer = io.BytesIO()
     image.save(buffer, format="WEBP")
     buffer.seek(0)
     return send_file(buffer, mimetype="image/webp")
 
 
+def _choose_password() -> None:
+    """Asks for the password on first start; without it nothing can be viewed."""
+    print("Choose the password that protects your OpenRecall history.")
+    print("Without it nobody, not even you, can view the recordings.")
+    while True:
+        password = getpass.getpass("Password: ")
+        if len(password) < vault.MIN_PASSWORD_LENGTH:
+            print(f"Use at least {vault.MIN_PASSWORD_LENGTH} characters.")
+            continue
+        if getpass.getpass("Repeat password: ") != password:
+            print("The passwords do not match.")
+            continue
+        break
+    vault.set_up(password)
+
+
+def _lock_when_idle_thread() -> None:
+    """Locks an idle session even when no request arrives to notice it."""
+    while True:
+        time.sleep(IDLE_CHECK_SECONDS)
+        _lock_if_idle()
+
+
 if __name__ == "__main__":
+    # Before recording starts: recording needs the public key
+    if not vault.is_set_up():
+        _choose_password()
+
     create_db()
     t = Thread(target=record_screenshots_thread)
     t.start()
+    Thread(target=_lock_when_idle_thread, daemon=True).start()
 
-    access_url = f"http://127.0.0.1:{PORT}/?token={ACCESS_TOKEN}"
+    access_url = f"http://127.0.0.1:{PORT}/"
     print(f"Open OpenRecall at: {access_url}")
     # Delayed so the server is listening by the time the browser connects
     Timer(BROWSER_OPEN_DELAY_SECONDS, webbrowser.open, args=[access_url]).start()

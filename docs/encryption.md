@@ -1,14 +1,22 @@
 # Encrypting Your OpenRecall Data
 
 OpenRecall encrypts OCR text, application metadata, screenshots, and embeddings
-before storing them. The encryption key is stored in the operating system's
-secure keyring (Windows Credential Vault, macOS Keychain, or the Linux Secret
-Service), rather than next to the database.
+before storing them, with a split between recording and viewing:
 
-The keyring protects the key from being exposed as a plaintext file. It does
-not protect data while OpenRecall is running under the same user account, and
-an attacker who can use that account may still access decrypted data through
-the application.
+- **Recording** uses a public key (X25519), stored openly in `auth.json`. It
+  can only encrypt, so screenshots are captured without asking for a password.
+- **Viewing** needs the matching private key. `auth.json` only holds it
+  encrypted with your password (derived with scrypt), and it is kept in memory
+  only while the web interface is unlocked.
+
+Someone using your account or a copy of your files therefore cannot read your
+history without the password. Deleting `auth.json` does not help either: a new
+password creates new keys, which cannot decrypt anything recorded before.
+Data recorded by versions from before this split cannot be read anymore and is
+removed by the retention purge.
+
+This does not protect against software that watches you type the password, or
+that reads the screen while you view your history.
 
 A sensible option to protect your (potentially sensitive) OpenRecall data is to use an external storage device, such as a USB stick or SD card (for MacBook Pro or laptops) with real-time disk encryption enabled. On Windows, BitLocker can be used. On macOS, you can create an encrypted disk image. On Linux, LUKS can be used to encrypt the disk. Before encrypting/formatting your storage device, ensure you have backed up any important data as the process will erase all existing data on the device. The OpenRecall project or its maintainers are not responsible for any data that can be damaged or lost during the below process or due to the use of OpenRecall.
 

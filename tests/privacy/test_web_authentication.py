@@ -1,68 +1,85 @@
-"""Privacy test: only the user can open the web interface.
+"""Privacy test: only someone who knows the password can open the web interface.
 
-The web interface serves decrypted screenshots and search results on
-localhost. Without authentication any local program, other user account or
-website (through CSRF or DNS rebinding) can read or erase them, which breaks
-confidentiality (GDPR Art. 32) and the purpose of encrypting the data at rest.
+The web interface shows decrypted screenshots and search results. Without
+authentication anyone at the computer, any local program, other user account
+or website (through CSRF or DNS rebinding) can read or erase them, which
+breaks confidentiality (GDPR Art. 32).
 """
+
+import time
 
 import pytest
 from flask.testing import FlaskClient
 
-from openrecall.app import ACCESS_TOKEN, SESSION_COOKIE, app
-
-
-@pytest.fixture
-def client() -> FlaskClient:
-    return app.test_client()
+from openrecall import vault
+from tests.conftest import TEST_PASSWORD
 
 
 @pytest.mark.parametrize("path", ["/", "/search?q=password", "/static/1.webp"])
-def test_requests_without_token_are_rejected(client: FlaskClient, path: str) -> None:
-    """Pages and screenshots are refused without the startup token."""
-    response = client.get(path)
+def test_pages_redirect_to_login_without_session(
+    app_client: FlaskClient, path: str
+) -> None:
+    response = app_client.get(path)
 
-    assert response.status_code == 403, f"{path} is reachable without logging in"
+    assert response.status_code == 302, f"{path} is reachable without logging in"
+    assert response.headers["Location"].endswith("/login")
 
 
-def test_forget_without_token_is_rejected(client: FlaskClient) -> None:
+def test_forget_without_session_is_rejected(app_client: FlaskClient) -> None:
     """Another website cannot erase the history with a hidden form."""
-    response = client.post("/forget", data={"minutes": "99999999"})
+    response = app_client.post("/forget", data={"minutes": "99999999"})
 
     assert response.status_code == 403
 
 
-def test_wrong_token_is_rejected(client: FlaskClient) -> None:
-    response = client.get("/?token=not-the-token")
+def test_wrong_password_is_rejected(app_client: FlaskClient) -> None:
+    response = app_client.post("/login", data={"password": "not the password"})
 
-    assert response.status_code == 403
+    assert response.status_code == 401
+    assert not vault.is_unlocked()
 
 
-def test_startup_link_sets_session_and_hides_token(client: FlaskClient) -> None:
-    """The startup link logs the browser in and removes the token from the URL."""
-    response = client.get(f"/?token={ACCESS_TOKEN}")
+def test_password_guessing_is_slowed_down(app_client: FlaskClient) -> None:
+    for _ in range(5):
+        app_client.post("/login", data={"password": "guess"})
+
+    response = app_client.post("/login", data={"password": TEST_PASSWORD})
+
+    assert response.status_code == 429, "Unlimited password guesses are allowed"
+    assert not vault.is_unlocked()
+
+
+def test_right_password_unlocks(app_client: FlaskClient) -> None:
+    response = app_client.post("/login", data={"password": TEST_PASSWORD})
 
     assert response.status_code == 302
-    assert "token" not in response.headers["Location"]
+    assert vault.is_unlocked()
     cookie = response.headers["Set-Cookie"]
-    assert f"{SESSION_COOKIE}=" in cookie
     assert "HttpOnly" in cookie
     assert "SameSite=Strict" in cookie
+    assert app_client.get("/").status_code == 200
 
 
-def test_session_cookie_gives_access(client: FlaskClient) -> None:
-    client.set_cookie(SESSION_COOKIE, ACCESS_TOKEN)
+def test_lock_button_ends_session(logged_in_client: FlaskClient) -> None:
+    logged_in_client.post("/lock")
 
-    response = client.get("/static/does-not-exist.webp")
-
-    # 404 instead of 403: the request got past authentication
-    assert response.status_code == 404
+    assert not vault.is_unlocked(), "The private key is still in memory"
+    assert logged_in_client.get("/").status_code == 302
 
 
-def test_foreign_host_is_rejected(client: FlaskClient) -> None:
+def test_idle_session_locks_itself(logged_in_client: FlaskClient) -> None:
+    import openrecall.app as app_module
+
+    app_module._session["last_activity"] = (
+        time.time() - app_module.SESSION_IDLE_SECONDS - 1
+    )
+
+    assert logged_in_client.get("/").status_code == 302
+    assert not vault.is_unlocked()
+
+
+def test_foreign_host_is_rejected(logged_in_client: FlaskClient) -> None:
     """A rebound domain is refused even with a valid session (DNS rebinding)."""
-    client.set_cookie(SESSION_COOKIE, ACCESS_TOKEN, domain="evil.example")
-
-    response = client.get("/", headers={"Host": "evil.example:8082"})
+    response = logged_in_client.get("/", headers={"Host": "evil.example:8082"})
 
     assert response.status_code == 403

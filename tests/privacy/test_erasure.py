@@ -91,13 +91,11 @@ def test_time_range_can_be_forgotten(store: Dict[str, object]) -> None:
     _assert_only_recent_activity_forgotten(store)
 
 
-def test_web_interface_can_forget_last_minutes(store: Dict[str, object]) -> None:
+def test_web_interface_can_forget_last_minutes(
+    store: Dict[str, object], logged_in_client
+) -> None:
     """The user can forget the last minutes from the web interface."""
-    from openrecall.app import ACCESS_TOKEN, SESSION_COOKIE, app
-
-    client = app.test_client()
-    client.set_cookie(SESSION_COOKIE, ACCESS_TOKEN)
-    response = client.post("/forget", data={"minutes": "15"})
+    response = logged_in_client.post("/forget", data={"minutes": "15"})
 
     assert response.status_code in (
         302,
