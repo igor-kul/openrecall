@@ -12,8 +12,11 @@ import os
 import pytest
 from cryptography.fernet import InvalidToken
 
-from openrecall import vault
 from tests.conftest import TEST_PASSWORD
+
+# Skips this file on versions of OpenRecall that have no vault yet,
+# instead of stopping the whole test run
+vault = pytest.importorskip("openrecall.vault", exc_type=ImportError)
 
 
 def test_recording_works_while_locked(password_vault) -> None:

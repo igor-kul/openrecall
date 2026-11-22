@@ -14,7 +14,12 @@ _TEST_PRIVATE_KEY = X25519PrivateKey.generate()
 @pytest.fixture(autouse=True)
 def unlocked_vault(monkeypatch: pytest.MonkeyPatch) -> None:
     """Gives every test an unlocked vault without a password or an auth.json."""
-    from openrecall import vault
+    try:
+        from openrecall import vault
+    except ImportError:
+        # Older versions of OpenRecall have no vault, so there is nothing to
+        # prepare; the tests must still run there to show what is missing
+        return
 
     monkeypatch.setattr(vault, "_public_key", _TEST_PRIVATE_KEY.public_key())
     monkeypatch.setattr(vault, "_private_key", _TEST_PRIVATE_KEY)

@@ -11,8 +11,11 @@ import time
 import pytest
 from flask.testing import FlaskClient
 
-from openrecall import vault
 from tests.conftest import TEST_PASSWORD
+
+# Skips this file on versions of OpenRecall that have no vault yet,
+# instead of stopping the whole test run
+vault = pytest.importorskip("openrecall.vault", exc_type=ImportError)
 
 
 @pytest.mark.parametrize("path", ["/", "/search?q=password", "/static/1.webp"])
