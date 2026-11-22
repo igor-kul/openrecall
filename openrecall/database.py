@@ -246,21 +246,24 @@ def _oldest_capture() -> Optional[int]:
 def _resize_padding(size: int) -> None:
     """Makes the filler file exactly `size` bytes long.
 
-    Growing the file writes real zeros: a file that is only extended without
+    Growing the file writes real bytes: a file that is only extended without
     writing takes no space on disk (sparse file), so the folder would still
-    visibly grow for anyone measuring it with du.
+    visibly grow for anyone measuring it with du. The bytes are random rather
+    than zeros, because some file systems and backup tools compress zeros to
+    almost nothing, which would make the folder shrink again.
     """
     path = _padding_path()
     current_size = os.path.getsize(path) if os.path.exists(path) else 0
     if size < current_size:
         os.truncate(path, size)
     elif size > current_size:
-        chunk = b"\0" * (1024 * 1024)
         with open(path, "ab") as f:
             remaining = size - current_size
             while remaining > 0:
-                written = f.write(chunk[:remaining])
-                remaining -= written
+                # Written in chunks of 1 MB so gigabytes never sit in memory
+                chunk_size = min(remaining, 1024 * 1024)
+                f.write(os.urandom(chunk_size))
+                remaining -= chunk_size
 
 
 def enforce_storage_limit() -> None:
