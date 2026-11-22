@@ -14,7 +14,11 @@ from openrecall.config import (
     screenshots_path,
 )
 from openrecall import vault
-from openrecall.database import insert_entry, purge_old_entries
+from openrecall.database import (
+    enforce_storage_limit,
+    insert_entry,
+    purge_old_entries,
+)
 from openrecall.nlp import get_embedding
 from openrecall.ocr import extract_text_from_image
 from openrecall.privacy import contains_sensitive_info
@@ -121,6 +125,8 @@ def record_screenshots_thread() -> None:
         # while the user is away from the computer
         if time.time() - last_purge >= PURGE_INTERVAL_SECONDS:
             purge_old_entries()
+            # Also creates the filler file at start-up, before any capture
+            enforce_storage_limit()
             last_purge = time.time()
 
         if not is_user_active():
@@ -159,4 +165,6 @@ def record_screenshots_thread() -> None:
                         text, timestamp, embedding, active_app_name, active_window_title
                     )
 
+        # New captures take space from the filler file, not from the disk
+        enforce_storage_limit()
         time.sleep(3)

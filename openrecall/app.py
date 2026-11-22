@@ -17,6 +17,7 @@ from openrecall.config import appdata_folder, screenshots_path
 from openrecall.database import (
     create_db,
     delete_entries_between,
+    enforce_storage_limit,
     get_all_entries,
     get_timestamps,
 )
@@ -350,6 +351,9 @@ def forget():
         return "Invalid number of minutes", 400
     now = int(time.time())
     delete_entries_between(now - minutes * 60, now)
+    # The freed space goes back to the filler file, so the folder size does not
+    # reveal that something was deleted
+    enforce_storage_limit()
     return redirect("/")
 
 

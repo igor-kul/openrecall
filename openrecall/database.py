@@ -8,9 +8,15 @@ from typing import List, Optional
 from cryptography.fernet import InvalidToken
 
 from openrecall import vault
-from openrecall.config import db_path, screenshots_path, RETENTION_DAYS
+from openrecall.config import (
+    db_path,
+    screenshots_path,
+    MAX_STORAGE_BYTES,
+    RETENTION_DAYS,
+)
 
 SECONDS_PER_DAY = 24 * 60 * 60
+BLOCK_SIZE = 4096  # Disks allocate space in blocks of this size
 
 
 Entry = namedtuple("Entry", ["id", "app", "title", "text", "timestamp", "embedding"])
@@ -195,3 +201,88 @@ def purge_old_entries(max_age_days: int = RETENTION_DAYS) -> int:
     """
     cutoff = int(time.time()) - max_age_days * SECONDS_PER_DAY
     return delete_entries_between(0, cutoff - 1)
+
+
+def _space_on_disk(path: str) -> int:
+    """Returns the space a file really takes on disk, or 0 if it does not exist."""
+    try:
+        return os.stat(path).st_blocks * 512
+    except FileNotFoundError:
+        return 0
+
+
+def _padding_path() -> str:
+    """The filler file that keeps the data folder at a constant size."""
+    return os.path.join(os.path.dirname(db_path), "padding.bin")
+
+
+def _data_size() -> int:
+    """Space taken by the recorded data: the database and the screenshots."""
+    total = _space_on_disk(db_path)
+    if os.path.isdir(screenshots_path):
+        for filename in os.listdir(screenshots_path):
+            total += _space_on_disk(os.path.join(screenshots_path, filename))
+    return total
+
+
+def _oldest_capture() -> Optional[int]:
+    """Timestamp of the oldest capture, in the database or in the screenshots."""
+    timestamps = []
+    if os.path.isdir(screenshots_path):
+        for filename in os.listdir(screenshots_path):
+            timestamp = _screenshot_timestamp(filename)
+            if timestamp is not None:
+                timestamps.append(timestamp)
+    try:
+        with sqlite3.connect(db_path) as conn:
+            oldest_row = conn.execute("SELECT MIN(timestamp) FROM entries").fetchone()[0]
+        if oldest_row is not None:
+            timestamps.append(oldest_row)
+    except sqlite3.Error as e:
+        print(f"Database error while looking for the oldest capture: {e}")
+    return min(timestamps) if timestamps else None
+
+
+def _resize_padding(size: int) -> None:
+    """Makes the filler file exactly `size` bytes long.
+
+    Growing the file writes real zeros: a file that is only extended without
+    writing takes no space on disk (sparse file), so the folder would still
+    visibly grow for anyone measuring it with du.
+    """
+    path = _padding_path()
+    current_size = os.path.getsize(path) if os.path.exists(path) else 0
+    if size < current_size:
+        os.truncate(path, size)
+    elif size > current_size:
+        chunk = b"\0" * (1024 * 1024)
+        with open(path, "ab") as f:
+            remaining = size - current_size
+            while remaining > 0:
+                written = f.write(chunk[:remaining])
+                remaining -= written
+
+
+def enforce_storage_limit() -> None:
+    """Keeps the data folder at the same size on disk, whatever the activity.
+
+    The folder always takes MAX_STORAGE_BYTES: a filler file takes the space
+    the data does not use yet. When the data reaches the limit, the oldest
+    captures are deleted. Someone who measures the folder over time therefore
+    cannot tell when or how much the user worked.
+    """
+    if MAX_STORAGE_BYTES is None:
+        # Only the tests switch the limit off, so they never write gigabytes
+        return
+
+    data_size = _data_size()
+    while data_size > MAX_STORAGE_BYTES:
+        oldest = _oldest_capture()
+        if oldest is None:
+            break
+        delete_entries_between(0, oldest)
+        data_size = _data_size()
+
+    # Rounded down to whole blocks, so the filler adds exactly what it says
+    free_space = max(0, MAX_STORAGE_BYTES - data_size)
+    _resize_padding(free_space - free_space % BLOCK_SIZE)

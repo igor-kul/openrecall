@@ -25,6 +25,21 @@ def unlocked_vault(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(vault, "_private_key", _TEST_PRIVATE_KEY)
 
 
+@pytest.fixture(autouse=True)
+def no_storage_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Switches the storage limit off, so no test writes gigabytes of filler.
+
+    With the limit on, every test that runs the capture loop would fill its
+    data folder up to the default limit (several GB). Some tests also point
+    the screenshots to the real folder, where the limit could delete real
+    captures. The storage tests set their own small limit.
+    """
+    from openrecall import database
+
+    # raising=False: older versions of OpenRecall have no storage limit
+    monkeypatch.setattr(database, "MAX_STORAGE_BYTES", None, raising=False)
+
+
 TEST_PASSWORD = "correct horse battery staple"
 
 

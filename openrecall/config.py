@@ -22,11 +22,22 @@ parser.add_argument(
     help="Comma-separated names of extra applications that are never recorded, "
     "e.g. 'WhatsApp,Signal'. Password managers are always excluded.",
 )
+parser.add_argument(
+    "--max-storage-gb",
+    type=float,
+    default=5,
+    help="Space the data folder always takes on disk, in GB. When it is full, "
+    "the oldest captures are deleted.",
+)
 args, _ = parser.parse_known_args()
 
 if args.retention_days < 1:
     parser.error("--retention-days must be at least 1")
 RETENTION_DAYS = args.retention_days
+
+if args.max_storage_gb <= 0:
+    parser.error("--max-storage-gb must be greater than 0")
+MAX_STORAGE_BYTES = int(args.max_storage_gb * 1024**3)
 
 EXCLUDED_APPS = DEFAULT_EXCLUDED_APPS + [
     name.strip() for name in args.exclude_apps.split(",") if name.strip()
