@@ -14,18 +14,33 @@ from cryptography.fernet import InvalidToken
 
 from tests.conftest import TEST_PASSWORD
 
-# Skips this file on versions of OpenRecall that have no vault yet,
-# instead of stopping the whole test run
-vault = pytest.importorskip("openrecall.vault", exc_type=ImportError)
+
+def _require_vault():
+    """Returns the vault, or fails the test on versions that have none.
+
+    Failing instead of skipping: without a vault the history is protected by
+    a single key that anyone using the account can read, which is exactly
+    what these tests must report.
+    """
+    try:
+        from openrecall import vault
+    except ImportError:
+        pytest.fail(
+            "OpenRecall has no vault: the recorded history can be decrypted "
+            "without the user's password"
+        )
+    return vault
 
 
 def test_recording_works_while_locked(password_vault) -> None:
+    vault = _require_vault()
     encrypted = vault.encrypt(b"screenshot")
 
     assert b"screenshot" not in encrypted
 
 
 def test_viewing_requires_password(password_vault) -> None:
+    vault = _require_vault()
     encrypted = vault.encrypt(b"screenshot")
 
     with pytest.raises(vault.VaultLocked):
@@ -36,11 +51,13 @@ def test_viewing_requires_password(password_vault) -> None:
 
 
 def test_wrong_password_does_not_unlock(password_vault) -> None:
+    vault = _require_vault()
     assert not vault.unlock("not the password")
     assert not vault.is_unlocked()
 
 
 def test_private_key_is_not_stored_in_plain_form(password_vault) -> None:
+    vault = _require_vault()
     assert vault.unlock(TEST_PASSWORD)
     private_bytes = vault._private_key.private_bytes_raw()
 
@@ -52,12 +69,14 @@ def test_private_key_is_not_stored_in_plain_form(password_vault) -> None:
 
 
 def test_password_cannot_be_overwritten(password_vault) -> None:
+    vault = _require_vault()
     with pytest.raises(FileExistsError):
         vault.set_up("an attacker's password")
 
 
 def test_deleting_auth_json_does_not_give_access(password_vault, monkeypatch) -> None:
     """Choosing a new password after deleting auth.json leaves the history unreadable."""
+    vault = _require_vault()
     encrypted = vault.encrypt(b"screenshot")
 
     os.remove(vault.auth_path)
@@ -70,6 +89,7 @@ def test_deleting_auth_json_does_not_give_access(password_vault, monkeypatch) ->
 
 
 def test_password_must_be_long_enough(tmp_path, monkeypatch) -> None:
+    vault = _require_vault()
     monkeypatch.setattr(vault, "auth_path", str(tmp_path / "auth.json"))
 
     with pytest.raises(ValueError):

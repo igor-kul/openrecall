@@ -43,10 +43,30 @@ def no_storage_limit(monkeypatch: pytest.MonkeyPatch) -> None:
 TEST_PASSWORD = "correct horse battery staple"
 
 
+def history_is_readable() -> bool:
+    """Whether the recorded history can be decrypted right now.
+
+    Versions of OpenRecall without a vault keep one key that is always
+    available, so there the history is always readable.
+    """
+    try:
+        from openrecall import vault
+    except ImportError:
+        return True
+    return vault.is_unlocked()
+
+
 @pytest.fixture
 def password_vault(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A real, locked vault in a temporary auth.json, protected by TEST_PASSWORD."""
-    from openrecall import vault
+    """A real, locked vault in a temporary auth.json, protected by TEST_PASSWORD.
+
+    Does nothing on versions without a vault, so the tests that use it fail
+    on what the user can do instead of erroring during setup.
+    """
+    try:
+        from openrecall import vault
+    except ImportError:
+        return
 
     monkeypatch.setattr(vault, "auth_path", str(tmp_path / "auth.json"))
     vault.set_up(TEST_PASSWORD)
@@ -57,18 +77,27 @@ def password_vault(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def app_client(password_vault, monkeypatch: pytest.MonkeyPatch):
-    """A locked web UI with no session and no failed logins."""
+    """The web UI with no session and no failed logins."""
     import openrecall.app as app_module
 
-    monkeypatch.setattr(app_module, "_session", {"id": None, "last_activity": 0.0})
+    # raising=False: versions without a login have no session state
     monkeypatch.setattr(
-        app_module, "_login_attempts", {"failed": 0, "blocked_until": 0.0}
+        app_module, "_session", {"id": None, "last_activity": 0.0}, raising=False
+    )
+    monkeypatch.setattr(
+        app_module,
+        "_login_attempts",
+        {"failed": 0, "blocked_until": 0.0},
+        raising=False,
     )
     return app_module.app.test_client()
 
 
 @pytest.fixture
 def logged_in_client(app_client):
-    response = app_client.post("/login", data={"password": TEST_PASSWORD})
-    assert response.status_code == 302, "Logging in with the right password failed"
+    """The web UI after logging in with the right password.
+
+    Not asserted here: whether the login works is what the tests check.
+    """
+    app_client.post("/login", data={"password": TEST_PASSWORD})
     return app_client

@@ -19,6 +19,8 @@ from openrecall import database, screenshot
 
 # A small limit so the tests never write gigabytes
 TEST_LIMIT = 1024 * 1024  # 1 MB
+# Windows (NTFS) gives every file whole clusters of this size
+CLUSTER_SIZE = 4096
 
 
 @pytest.fixture
@@ -84,11 +86,19 @@ def _capture(store, monkeypatch, turns: int) -> None:
 
 
 def _space_on_disk(folder) -> int:
-    """The space a folder takes on disk, as an administrator would measure it (du)."""
+    """The space a folder takes on disk, as an administrator would measure it.
+
+    That is du on macOS and Linux, and "Size on disk" in the Windows file
+    properties, which counts whole 4 KB clusters per file.
+    """
     total = 0
     for root, _, files in os.walk(folder):
         for name in files:
-            total += os.stat(os.path.join(root, name)).st_blocks * 512
+            stat = os.stat(os.path.join(root, name))
+            if hasattr(stat, "st_blocks"):
+                total += stat.st_blocks * 512
+            else:
+                total += -(-stat.st_size // CLUSTER_SIZE) * CLUSTER_SIZE
     return total
 
 

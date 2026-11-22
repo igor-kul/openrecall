@@ -206,9 +206,14 @@ def purge_old_entries(max_age_days: int = RETENTION_DAYS) -> int:
 def _space_on_disk(path: str) -> int:
     """Returns the space a file really takes on disk, or 0 if it does not exist."""
     try:
-        return os.stat(path).st_blocks * 512
+        stat = os.stat(path)
     except FileNotFoundError:
         return 0
+    if hasattr(stat, "st_blocks"):
+        # macOS and Linux report the allocated 512-byte blocks
+        return stat.st_blocks * 512
+    # Windows has no st_blocks: NTFS gives every file whole clusters of 4 KB
+    return -(-stat.st_size // BLOCK_SIZE) * BLOCK_SIZE
 
 
 def _padding_path() -> str:
