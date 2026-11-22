@@ -59,46 +59,48 @@ def _stored_timestamps(db_path: str) -> set:
         return {row[0] for row in conn.execute("SELECT timestamp FROM entries")}
 
 
-def _assert_only_recent_activity_forgotten(store: Dict[str, object]) -> None:
-    """Check that the last 15 minutes are gone, rows and files, and nothing else.
+@pytest.fixture
+def user_client(request):
+    """The web interface as the user sees it: logged in if OpenRecall has a login."""
+    try:
+        from openrecall import vault  # noqa: F401
+    except ImportError:
+        # The original version has no login: the interface is open to anyone
+        from openrecall.app import app
 
-    Args:
-        store: The data store created by the fixture.
+        return app.test_client()
+    # calls logged_in_client fixture through request fixture instead of arg
+    return request.getfixturevalue("logged_in_client")
+
+
+def _forget_last_15_minutes(client) -> None:
+    """Does what the user does in the web interface: Forget, last 15 minutes.
+
+    The tests do not call any delete function themselves: they only use what
+    the user can reach.
     """
+    client.post("/forget", data={"minutes": "15"})
+
+
+def test_forgotten_entries_are_removed_from_database(store, user_client) -> None:
+    """After Forget, the last 15 minutes must not stay in the database."""
+    _forget_last_15_minutes(user_client)
+
     remaining = _stored_timestamps(store["db_path"])
+    for ts in store["forget_ts"]:
+        assert ts not in remaining, "Forgotten entry is still stored"
+    assert store["keep_ts"] in remaining, "Older entry must be kept"
+
+
+def test_forgotten_screenshots_are_removed_from_disk(store, user_client) -> None:
+    """After Forget, the screenshots of the last 15 minutes must not stay on disk."""
+    _forget_last_15_minutes(user_client)
+
     screenshots_path = store["screenshots_path"]
     for ts in store["forget_ts"]:
-        assert ts not in remaining, "Forgotten capture is still in the database"
         assert not os.path.exists(
             screenshots_path / f"{ts}.webp"
         ), "Forgotten screenshot is still on disk"
-    assert store["keep_ts"] in remaining, "Older capture must be kept"
     assert os.path.exists(
         screenshots_path / f"{store['keep_ts']}.webp"
     ), "Older screenshot must be kept"
-
-
-def test_time_range_can_be_forgotten(store: Dict[str, object]) -> None:
-    """Deleting a time range removes its rows and screenshots, and only those."""
-    if not hasattr(database, "delete_entries_between"):
-        pytest.fail(
-            "No erasure mechanism: openrecall.database.delete_entries_between() "
-            "does not exist, so the user cannot remove what was captured."
-        )
-
-    database.delete_entries_between(store["now"] - 15 * MINUTE, store["now"])
-
-    _assert_only_recent_activity_forgotten(store)
-
-
-def test_web_interface_can_forget_last_minutes(
-    store: Dict[str, object], logged_in_client
-) -> None:
-    """The user can forget the last minutes from the web interface."""
-    response = logged_in_client.post("/forget", data={"minutes": "15"})
-
-    assert response.status_code in (
-        302,
-        303,
-    ), f"POST /forget is not available (HTTP {response.status_code})"
-    _assert_only_recent_activity_forgotten(store)

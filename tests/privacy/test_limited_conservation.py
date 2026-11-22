@@ -8,11 +8,10 @@ Currently openrecall never deletes anything.
 
 import os
 import pytest
-from openrecall import database
+from openrecall import database, screenshot
 import time
 import numpy as np
 import sqlite3
-from typing import Dict
 
 RETENTION_DAYS = 30  # amount of days
 DAY = 24 * 60 * 60
@@ -59,20 +58,30 @@ def _stored_timestamps(db_path: str) -> set:
         return {row[0] for row in conn.execute("SELECT timestamp FROM entries")}
 
 
-def _purge() -> None:
-    """Runs the purge. Assumes the db purges with through a purge_old_entries function
-    if function not defined, will throw exception rather than execution error"""
-    if not hasattr(database, "purge_old_entries"):
-        pytest.fail(
-            "No retention mechanism: openrecall.database.purge_old_entries() "
-            "does not exist, so captured data is kept forever."
-        )
-    database.purge_old_entries()
+def _run_openrecall_once(monkeypatch) -> None:
+    """Runs one turn of the capture loop, like the application does on its own.
+
+    The tests do not call any delete function themselves: expired data has to
+    disappear just because openrecall is running.
+    """
+
+    def stop_loop(seconds: float) -> None:
+        # The capture loop never ends, so stop it at its first pause
+        raise InterruptedError
+
+    # No real screen capture: the loop grabs the screen once before it starts
+    monkeypatch.setattr(screenshot, "take_screenshots", lambda: [])
+    # An idle user: the loop takes no screenshot and goes straight to sleep
+    monkeypatch.setattr(screenshot, "is_user_active", lambda: False)
+    monkeypatch.setattr(screenshot.time, "sleep", stop_loop)
+
+    with pytest.raises(InterruptedError):
+        screenshot.record_screenshots_thread()
 
 
-def test_expired_entries_are_removed_from_database(store: Dict[str, object]) -> None:
-    """OCR text and metadata older than 30 days must be deleted."""
-    _purge()
+def test_expired_entries_are_removed_from_database(store, monkeypatch) -> None:
+    """OCR text and metadata older than 30 days must not stay in the database."""
+    _run_openrecall_once(monkeypatch)
 
     remaining = _stored_timestamps(store["db_path"])
     assert (
@@ -81,9 +90,9 @@ def test_expired_entries_are_removed_from_database(store: Dict[str, object]) -> 
     assert store["recent_ts"] in remaining, "Recent entry must be kept"
 
 
-def test_expired_screenshots_are_removed_from_disk(store: Dict[str, object]) -> None:
-    """Screenshot files older than 30 days must be deleted, not only their rows."""
-    _purge()
+def test_expired_screenshots_are_removed_from_disk(store, monkeypatch) -> None:
+    """Screenshot files older than 30 days must not stay on disk."""
+    _run_openrecall_once(monkeypatch)
 
     screenshots_path = store["screenshots_path"]
     assert not os.path.exists(
@@ -92,23 +101,3 @@ def test_expired_screenshots_are_removed_from_disk(store: Dict[str, object]) -> 
     assert os.path.exists(
         screenshots_path / f"{store['recent_ts']}.webp"
     ), "Recent screenshot must be kept"
-
-
-def test_expired_data_is_removed_by_the_capture_loop(store, monkeypatch) -> None:
-    """Expired data must disappear on its own, without the user running a purge."""
-    from openrecall import screenshot
-
-    def stop_loop(seconds: float) -> None:
-        # The capture loop never ends, so stop it at its first pause
-        raise InterruptedError
-
-    # An idle user: the loop takes no screenshot and goes straight to sleep
-    monkeypatch.setattr(screenshot, "is_user_active", lambda: False)
-    monkeypatch.setattr(screenshot.time, "sleep", stop_loop)
-
-    with pytest.raises(InterruptedError):
-        screenshot.record_screenshots_thread()
-
-    assert (
-        store["expired_ts"] not in _stored_timestamps(store["db_path"])
-    ), "The capture loop never removes expired data"
